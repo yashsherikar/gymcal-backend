@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: gymcal-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: MONGODB_URI
+        sync: false   # Set in Render dashboard
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false   # Set in Render dashboard
+      - key: CORS_ORIGINS
+        value: https://your-frontend-url.vercel.app
