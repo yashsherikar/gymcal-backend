@@ -2,6 +2,8 @@ package com.gymcal.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.gymcal.dto.FoodDTOs;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,141 +19,168 @@ import java.time.Duration;
 @Service
 public class GeminiService {
 
-    // Use gemini-1.5-flash — free tier, fast, supports JSON output
     private static final String GEMINI_URL =
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=";
 
     @Value("${gemini.api.key}")
     private String apiKey;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(30))
             .build();
 
-    /**
-     * Analyze food nutrition — called by FoodLogService
-     */
     public FoodDTOs.NutritionInfo analyzeFoodNutrition(String foodName, Double quantityGrams) {
         double quantity = (quantityGrams != null && quantityGrams > 0) ? quantityGrams : 100.0;
-
-        String prompt = String.format(
-            "You are a nutritionist. Analyze the nutrition for %.0f grams of: %s\n\n" +
-            "Respond ONLY with a valid JSON object. No markdown, no explanation, no code fences.\n" +
-            "Use EXACTLY this format with realistic numeric values:\n" +
-            "{\"foodName\":\"%s\",\"calories\":0,\"proteinGrams\":0,\"carbsGrams\":0,\"fatGrams\":0,\"fiberGrams\":0,\"aiAnalysis\":\"brief 1-line description\"}",
-            quantity, foodName, foodName
-        );
-
         try {
-            String raw = callGemini(prompt);
+            String raw = callGemini(foodName, quantity);
+            log.info("Gemini raw text for [{}]: [{}]", foodName, raw);
+
             if (raw == null || raw.startsWith("ERROR:")) {
                 return buildError(raw != null ? raw : "Gemini API failed");
             }
-            return parseNutritionJson(raw, foodName, quantity);
+            return parseNutrition(raw, foodName, quantity);
         } catch (Exception e) {
-            log.error("analyzeFoodNutrition error", e);
-            return buildError("Failed to analyze: " + e.getMessage());
+            log.error("analyzeFoodNutrition exception for [{}]", foodName, e);
+            return buildError("Failed: " + e.getMessage());
         }
     }
 
-    /**
-     * Call Gemini API and return raw text response
-     */
-    private String callGemini(String prompt) {
+    private String callGemini(String foodName, double quantity) {
         try {
-            // Escape prompt for JSON string
-            String escapedPrompt = prompt
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
+            // Clear, unambiguous prompt — no template with 0s that Gemini copies literally
+            String prompt =
+                "You are a nutrition database. Return ONLY a JSON object with the exact nutrition " +
+                "values for " + (int)quantity + " grams of " + foodName + ". " +
+                "The JSON must have these exact keys with REAL numeric values (not zeros): " +
+                "foodName (string), calories (number), proteinGrams (number), " +
+                "carbsGrams (number), fatGrams (number), fiberGrams (number), " +
+                "aiAnalysis (one sentence string). " +
+                "Do NOT include markdown, backticks, or any text outside the JSON object.";
 
-            String requestBody = String.format("""
-                {
-                  "contents": [{"parts": [{"text": "%s"}]}],
-                  "generationConfig": {
-                    "temperature": 0.1,
-                    "maxOutputTokens": 512
-                  }
-                }
-                """, escapedPrompt);
+            // Build request using ObjectMapper — zero risk of escaping bugs
+            ObjectNode part = mapper.createObjectNode();
+            part.put("text", prompt);
+
+            ArrayNode parts = mapper.createArrayNode();
+            parts.add(part);
+
+            ObjectNode contentObj = mapper.createObjectNode();
+            contentObj.set("parts", parts);
+
+            ArrayNode contents = mapper.createArrayNode();
+            contents.add(contentObj);
+
+            ObjectNode genConfig = mapper.createObjectNode();
+            genConfig.put("temperature", 0.2);
+            genConfig.put("maxOutputTokens", 400);
+
+            ObjectNode reqBody = mapper.createObjectNode();
+            reqBody.set("contents", contents);
+            reqBody.set("generationConfig", genConfig);
+
+            String requestJson = mapper.writeValueAsString(reqBody);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(GEMINI_URL + apiKey))
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .POST(HttpRequest.BodyPublishers.ofString(requestJson))
                     .timeout(Duration.ofSeconds(30))
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-            log.debug("Gemini response status: {}", response.statusCode());
-            log.debug("Gemini response body: {}", response.body());
+            log.info("Gemini HTTP status: {}", response.statusCode());
 
             if (response.statusCode() != 200) {
-                log.error("Gemini API error {}: {}", response.statusCode(), response.body());
-                return "ERROR: Gemini API returned " + response.statusCode();
+                log.error("Gemini error {}: {}", response.statusCode(), response.body());
+                return "ERROR: HTTP " + response.statusCode() + " — " + response.body();
             }
 
-            JsonNode root = objectMapper.readTree(response.body());
+            JsonNode root = mapper.readTree(response.body());
+
+            // API-level error in body
+            if (root.has("error")) {
+                String msg = root.path("error").path("message").asText("unknown");
+                log.error("Gemini API error: {}", msg);
+                return "ERROR: " + msg;
+            }
+
             JsonNode candidates = root.path("candidates");
             if (candidates.isMissingNode() || candidates.isEmpty()) {
-                log.error("No candidates in Gemini response: {}", response.body());
-                return "ERROR: No response from Gemini";
+                log.error("No candidates: {}", response.body());
+                return "ERROR: No candidates in response";
             }
 
-            String text = candidates.get(0)
-                    .path("content")
-                    .path("parts")
-                    .get(0)
-                    .path("text")
-                    .asText("");
+            JsonNode firstCandidate = candidates.get(0);
 
-            return text.trim();
+            // Blocked by safety filter
+            String finishReason = firstCandidate.path("finishReason").asText("");
+            if ("SAFETY".equals(finishReason) || "RECITATION".equals(finishReason)) {
+                return "ERROR: Response blocked by safety filter";
+            }
+
+            JsonNode partsNode = firstCandidate.path("content").path("parts");
+            if (partsNode.isMissingNode() || partsNode.isEmpty()) {
+                return "ERROR: Empty parts in response";
+            }
+
+            return partsNode.get(0).path("text").asText("").trim();
 
         } catch (Exception e) {
-            log.error("Gemini API call failed", e);
+            log.error("callGemini exception", e);
             return "ERROR: " + e.getMessage();
         }
     }
 
-    /**
-     * Parse Gemini's JSON response into NutritionInfo
-     */
-    private FoodDTOs.NutritionInfo parseNutritionJson(String raw, String foodName, double quantity) {
+    private FoodDTOs.NutritionInfo parseNutrition(String raw, String foodName, double quantity) {
         try {
-            // Strip any markdown fences Gemini might add despite instructions
             String cleaned = raw.trim();
-            if (cleaned.startsWith("```")) {
-                cleaned = cleaned.replaceAll("(?s)```[a-zA-Z]*\\s*", "").replace("```", "").trim();
+
+            // Remove markdown fences
+            if (cleaned.contains("```")) {
+                cleaned = cleaned.replaceAll("(?s)```[a-zA-Z]*\\s*", "")
+                                 .replace("```", "").trim();
             }
 
-            // Extract JSON object if wrapped in extra text
+            // Extract first complete JSON object { ... }
             int start = cleaned.indexOf('{');
-            int end = cleaned.lastIndexOf('}');
-            if (start >= 0 && end > start) {
-                cleaned = cleaned.substring(start, end + 1);
+            int end   = cleaned.lastIndexOf('}');
+            if (start < 0 || end <= start) {
+                log.error("No JSON in response: [{}]", raw);
+                return buildError("AI returned unexpected format. Try again.");
             }
+            cleaned = cleaned.substring(start, end + 1);
 
-            JsonNode node = objectMapper.readTree(cleaned);
+            JsonNode node = mapper.readTree(cleaned);
+
+            double calories = node.path("calories").asDouble(0);
+            double protein  = node.path("proteinGrams").asDouble(0);
+            double carbs    = node.path("carbsGrams").asDouble(0);
+            double fat      = node.path("fatGrams").asDouble(0);
+            double fiber    = node.path("fiberGrams").asDouble(0);
+
+            // Sanity check — if all macros are 0, something went wrong
+            if (calories == 0 && protein == 0 && carbs == 0 && fat == 0) {
+                log.warn("All macros are 0 for [{}], raw=[{}]", foodName, raw);
+                return buildError("AI returned zero values. Please try again.");
+            }
 
             return FoodDTOs.NutritionInfo.builder()
                     .foodName(node.path("foodName").asText(foodName))
                     .quantityGrams(quantity)
-                    .calories(node.path("calories").asDouble(0))
-                    .proteinGrams(node.path("proteinGrams").asDouble(0))
-                    .carbsGrams(node.path("carbsGrams").asDouble(0))
-                    .fatGrams(node.path("fatGrams").asDouble(0))
-                    .fiberGrams(node.path("fiberGrams").asDouble(0))
+                    .calories(Math.round(calories * 10.0) / 10.0)
+                    .proteinGrams(Math.round(protein * 10.0) / 10.0)
+                    .carbsGrams(Math.round(carbs * 10.0) / 10.0)
+                    .fatGrams(Math.round(fat * 10.0) / 10.0)
+                    .fiberGrams(Math.round(fiber * 10.0) / 10.0)
                     .aiAnalysis(node.path("aiAnalysis").asText(""))
                     .success(true)
                     .build();
 
         } catch (Exception e) {
-            log.error("Failed to parse Gemini JSON: [{}]", raw, e);
-            return buildError("Could not parse nutrition data. Raw: " + raw.substring(0, Math.min(raw.length(), 100)));
+            log.error("parseNutrition failed for raw=[{}]", raw, e);
+            return buildError("Could not parse AI response. Try again.");
         }
     }
 
