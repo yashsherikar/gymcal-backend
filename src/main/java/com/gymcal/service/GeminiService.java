@@ -20,12 +20,22 @@ import java.time.Duration;
 public class GeminiService {
 
     private static final String GEMINI_URL =
-        "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=";
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=";
 
     @Value("${gemini.api.key}")
     private String apiKey;
 
     private final ObjectMapper mapper = new ObjectMapper();
+
+    @jakarta.annotation.PostConstruct
+    public void init() {
+        if (apiKey == null || apiKey.isBlank() || apiKey.equals("your-gemini-key-here")) {
+            log.error("===== GEMINI_API_KEY is NOT SET or invalid! Food search will fail. =====");
+        } else {
+            log.info("===== GeminiService ready. Key prefix: {} =====",
+                apiKey.substring(0, Math.min(8, apiKey.length())) + "...");
+        }
+    }
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(30))
             .build();
@@ -93,8 +103,10 @@ public class GeminiService {
             log.info("Gemini HTTP status: {}", response.statusCode());
 
             if (response.statusCode() != 200) {
-                log.error("Gemini error {}: {}", response.statusCode(), response.body());
-                return "ERROR: HTTP " + response.statusCode() + " — " + response.body();
+                String errBody = response.body();
+                log.error("Gemini HTTP {}: {}", response.statusCode(), errBody);
+                // Return full error so frontend can display it
+                return "ERROR: HTTP " + response.statusCode() + " — " + errBody;
             }
 
             JsonNode root = mapper.readTree(response.body());
