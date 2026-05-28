@@ -22,13 +22,12 @@ public class FoodLogService {
 
     private final FoodLogRepository foodLogRepository;
     private final UserRepository userRepository;
-    private final GeminiService anthropicService;
+    private final GeminiService geminiService;   // ← correct: matches bean name
 
-    // Search food nutrition via AI (without adding to log)
+    // Search food nutrition via AI (preview — does NOT add to log)
     public FoodDTOs.NutritionInfo searchFood(String userId, FoodDTOs.FoodSearchRequest request) {
-        // Verify user exists
         userRepository.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
-        return anthropicService.analyzeFoodNutrition(request.getFoodName(), request.getQuantityGrams());
+        return geminiService.analyzeFoodNutrition(request.getFoodName(), request.getQuantityGrams());
     }
 
     // Add food to daily log
@@ -37,31 +36,31 @@ public class FoodLogService {
 
         LocalDate logDate = request.getLogDate() != null ? request.getLogDate() : LocalDate.now();
 
-        // If nutrition not pre-filled, fetch from AI
         double calories = 0, protein = 0, carbs = 0, fat = 0, fiber = 0;
         String aiAnalysis = request.getAiAnalysis();
 
         if (request.getCalories() != null) {
+            // Nutrition already provided from frontend (user searched first, then added)
             calories = request.getCalories();
-            protein = Optional.ofNullable(request.getProteinGrams()).orElse(0.0);
-            carbs = Optional.ofNullable(request.getCarbsGrams()).orElse(0.0);
-            fat = Optional.ofNullable(request.getFatGrams()).orElse(0.0);
-            fiber = Optional.ofNullable(request.getFiberGrams()).orElse(0.0);
+            protein  = Optional.ofNullable(request.getProteinGrams()).orElse(0.0);
+            carbs    = Optional.ofNullable(request.getCarbsGrams()).orElse(0.0);
+            fat      = Optional.ofNullable(request.getFatGrams()).orElse(0.0);
+            fiber    = Optional.ofNullable(request.getFiberGrams()).orElse(0.0);
         } else {
-            // Fetch from AI
-            FoodDTOs.NutritionInfo nutrition = anthropicService.analyzeFoodNutrition(
+            // Fallback: fetch from Gemini if not pre-filled
+            FoodDTOs.NutritionInfo nutrition = geminiService.analyzeFoodNutrition(
                     request.getFoodName(), request.getQuantityGrams());
             if (nutrition.isSuccess()) {
-                calories = nutrition.getCalories();
-                protein = nutrition.getProteinGrams();
-                carbs = nutrition.getCarbsGrams();
-                fat = nutrition.getFatGrams();
-                fiber = nutrition.getFiberGrams();
+                calories   = nutrition.getCalories();
+                protein    = nutrition.getProteinGrams();
+                carbs      = nutrition.getCarbsGrams();
+                fat        = nutrition.getFatGrams();
+                fiber      = nutrition.getFiberGrams();
                 aiAnalysis = nutrition.getAiAnalysis();
             }
         }
 
-        FoodLog log = FoodLog.builder()
+        FoodLog foodLog = FoodLog.builder()
                 .userId(userId)
                 .logDate(logDate)
                 .mealType(request.getMealType().toUpperCase())
@@ -76,26 +75,25 @@ public class FoodLogService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        FoodLog saved = foodLogRepository.save(log);
+        FoodLog saved = foodLogRepository.save(foodLog);
         return mapToResponse(saved);
     }
 
     // Get daily summary
     public FoodDTOs.DailySummary getDailySummary(String userId, LocalDate date) {
-        User user = userRepository.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
 
         if (date == null) date = LocalDate.now();
 
         List<FoodLog> logs = foodLogRepository.findByUserIdAndLogDateOrderByCreatedAtDesc(userId, date);
 
-        // Calculate totals
-        double totalCals = logs.stream().mapToDouble(FoodLog::getCalories).sum();
+        double totalCals    = logs.stream().mapToDouble(FoodLog::getCalories).sum();
         double totalProtein = logs.stream().mapToDouble(FoodLog::getProteinGrams).sum();
-        double totalCarbs = logs.stream().mapToDouble(FoodLog::getCarbsGrams).sum();
-        double totalFat = logs.stream().mapToDouble(FoodLog::getFatGrams).sum();
-        double totalFiber = logs.stream().mapToDouble(FoodLog::getFiberGrams).sum();
+        double totalCarbs   = logs.stream().mapToDouble(FoodLog::getCarbsGrams).sum();
+        double totalFat     = logs.stream().mapToDouble(FoodLog::getFatGrams).sum();
+        double totalFiber   = logs.stream().mapToDouble(FoodLog::getFiberGrams).sum();
 
-        // Group by meal type
         Map<String, List<FoodLog>> mealGroups = logs.stream()
                 .collect(Collectors.groupingBy(FoodLog::getMealType));
 
@@ -113,10 +111,10 @@ public class FoodLogService {
                 })
                 .collect(Collectors.toList());
 
-        int targetCals = user.getDailyCalorieTarget();
+        int    targetCals    = user.getDailyCalorieTarget();
         double targetProtein = user.getDailyProteinTarget();
-        double targetCarbs = user.getDailyCarbTarget();
-        double targetFat = user.getDailyFatTarget();
+        double targetCarbs   = user.getDailyCarbTarget();
+        double targetFat     = user.getDailyFatTarget();
 
         return FoodDTOs.DailySummary.builder()
                 .date(date)
@@ -124,33 +122,33 @@ public class FoodLogService {
                 .targetProtein(targetProtein)
                 .targetCarbs(targetCarbs)
                 .targetFat(targetFat)
-                .consumedCalories(Math.round(totalCals * 10.0) / 10.0)
-                .consumedProtein(Math.round(totalProtein * 10.0) / 10.0)
-                .consumedCarbs(Math.round(totalCarbs * 10.0) / 10.0)
-                .consumedFat(Math.round(totalFat * 10.0) / 10.0)
-                .consumedFiber(Math.round(totalFiber * 10.0) / 10.0)
-                .remainingCalories(Math.max(0, targetCals - totalCals))
-                .remainingProtein(Math.max(0, targetProtein - totalProtein))
-                .calorieProgress(targetCals > 0 ? Math.min(100, (totalCals / targetCals) * 100) : 0)
+                .consumedCalories(Math.round(totalCals    * 10.0) / 10.0)
+                .consumedProtein( Math.round(totalProtein * 10.0) / 10.0)
+                .consumedCarbs(   Math.round(totalCarbs   * 10.0) / 10.0)
+                .consumedFat(     Math.round(totalFat     * 10.0) / 10.0)
+                .consumedFiber(   Math.round(totalFiber   * 10.0) / 10.0)
+                .remainingCalories(Math.max(0, targetCals    - totalCals))
+                .remainingProtein( Math.max(0, targetProtein - totalProtein))
+                .calorieProgress(targetCals    > 0 ? Math.min(100, (totalCals    / targetCals)    * 100) : 0)
                 .proteinProgress(targetProtein > 0 ? Math.min(100, (totalProtein / targetProtein) * 100) : 0)
-                .carbProgress(targetCarbs > 0 ? Math.min(100, (totalCarbs / targetCarbs) * 100) : 0)
-                .fatProgress(targetFat > 0 ? Math.min(100, (totalFat / targetFat) * 100) : 0)
+                .carbProgress(   targetCarbs   > 0 ? Math.min(100, (totalCarbs   / targetCarbs)   * 100) : 0)
+                .fatProgress(    targetFat     > 0 ? Math.min(100, (totalFat     / targetFat)     * 100) : 0)
                 .meals(meals)
                 .build();
     }
 
-    // Get weekly history
+    // Get last 7 days
     public List<FoodDTOs.DailySummary> getWeeklySummary(String userId) {
-        LocalDate today = LocalDate.now();
+        LocalDate today   = LocalDate.now();
         LocalDate weekAgo = today.minusDays(6);
         List<FoodDTOs.DailySummary> summaries = new ArrayList<>();
-        for (LocalDate date = weekAgo; !date.isAfter(today); date = date.plusDays(1)) {
-            summaries.add(getDailySummary(userId, date));
+        for (LocalDate d = weekAgo; !d.isAfter(today); d = d.plusDays(1)) {
+            summaries.add(getDailySummary(userId, d));
         }
         return summaries;
     }
 
-    // Delete food log entry
+    // Delete a log entry
     public void deleteFoodLog(String userId, String logId) {
         foodLogRepository.deleteByIdAndUserId(logId, userId);
     }
