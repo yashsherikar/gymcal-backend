@@ -1,27 +1,35 @@
 package com.gymcal.service;
 
+import java.time.LocalDateTime;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+
 import com.gymcal.dto.AuthDTOs;
 import com.gymcal.dto.FoodDTOs;
 import com.gymcal.model.User;
 import com.gymcal.repository.UserRepository;
 import com.gymcal.security.JwtService;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.stereotype.Service;
-
-import java.time.LocalDateTime;
 
 @Slf4j
-@Service
+@Service	
 @RequiredArgsConstructor
 public class UserService {
 
-    private final UserRepository userRepository;
-    private final NutritionCalculatorService calculator;
-    private final JwtService jwtService;
-    private final PasswordEncoder passwordEncoder;
+	@Autowired
+    private  UserRepository userRepository;
+	@Autowired
+    private  NutritionCalculatorService calculator;
+	@Autowired
+    private  JwtService jwtService;
+	@Autowired
+    private  PasswordEncoder passwordEncoder;
+    
 
     public AuthDTOs.AuthResponse register(AuthDTOs.RegisterRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {

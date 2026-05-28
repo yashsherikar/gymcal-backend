@@ -1,19 +1,24 @@
 package com.gymcal.service;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
+
+import org.springframework.stereotype.Service;
+
 import com.gymcal.dto.FoodDTOs;
 import com.gymcal.model.FoodLog;
 import com.gymcal.model.User;
 import com.gymcal.repository.FoodLogRepository;
 import com.gymcal.repository.UserRepository;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.*;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -23,7 +28,8 @@ public class FoodLogService {
     private final FoodLogRepository foodLogRepository;
     private final UserRepository userRepository;
     private final GeminiService geminiService;
-
+    
+  
     public FoodDTOs.NutritionInfo searchFood(String userId, FoodDTOs.FoodSearchRequest request) {
         userRepository.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
         return geminiService.analyzeFoodNutrition(request.getFoodName(), request.getQuantityGrams());
