@@ -11,7 +11,6 @@ import org.springframework.data.mongodb.core.index.CompoundIndexes;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Data
 @Builder
@@ -32,7 +31,12 @@ public class FoodLog {
 
     // Food details from AI
     private String foodName;
-    private double quantityGrams;
+
+    // NEW: flexible quantity — either grams OR count/unit
+    private double quantityGrams;      // resolved grams (always filled after AI analysis)
+    private String quantityDisplay;    // what user typed: "2 rotis", "1 cup", "150g"
+    private String quantityUnit;       // "grams", "pieces", "cups", "ml", "serving"
+    private double quantityAmount;     // the numeric amount e.g. 2 (for "2 rotis")
 
     // Nutrition per the given quantity
     private double calories;
@@ -40,6 +44,12 @@ public class FoodLog {
     private double carbsGrams;
     private double fatGrams;
     private double fiberGrams;
+
+    // NEW: Good vs Bad calories breakdown
+    private double goodCalories;       // from protein + fiber
+    private double badCalories;        // from saturated fat + added sugars estimate
+    private double neutralCalories;    // remaining (healthy carbs + unsaturated fat)
+    private String calorieQuality;     // "EXCELLENT", "GOOD", "MODERATE", "POOR"
 
     // AI raw response for reference
     private String aiAnalysis;
