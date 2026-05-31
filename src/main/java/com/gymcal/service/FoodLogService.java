@@ -1,191 +1,122 @@
 package com.gymcal.service;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Collectors;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-
 import com.gymcal.dto.FoodDTOs;
 import com.gymcal.model.FoodLog;
 import com.gymcal.model.User;
 import com.gymcal.repository.FoodLogRepository;
 import com.gymcal.repository.UserRepository;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
 
-@Slf4j
-@Service
-@RequiredArgsConstructor
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Slf4j @Service @RequiredArgsConstructor
 public class FoodLogService {
 
-    @Autowired
-    private FoodLogRepository foodLogRepository;
-    @Autowired
-    private UserRepository userRepository;
-    @Autowired
-    private GeminiService geminiService;
+    private final FoodLogRepository foodLogRepository;
+    private final UserRepository userRepository;
+    private final GeminiService geminiService;
 
-    /**
-     * Search food — supports grams OR natural quantity (2 rotis, 1 cup dal)
-     */
-    public FoodDTOs.NutritionInfo searchFood(String userId, FoodDTOs.FoodSearchRequest request) {
+    public FoodDTOs.NutritionInfo searchFood(String userId, FoodDTOs.FoodSearchRequest req) {
         userRepository.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
-        return geminiService.analyzeFoodNutrition(
-                request.getFoodName(),
-                request.getQuantityGrams(),
-                request.getQuantityAmount(),
-                request.getQuantityUnit()
-        );
+        String unit   = req.getQuantityUnit() != null ? req.getQuantityUnit() : "grams";
+        Double amount = req.getQuantityAmount() != null ? req.getQuantityAmount() : 100.0;
+        return geminiService.analyzeFoodNutrition(req.getFoodName(), amount, unit);
     }
 
-    /**
-     * Add food to daily log with good/bad calorie tracking
-     */
-    public FoodDTOs.FoodLogResponse addFoodLog(String userId, FoodDTOs.AddFoodLogRequest request) {
+    public FoodDTOs.FoodLogResponse addFoodLog(String userId, FoodDTOs.AddFoodLogRequest req) {
         userRepository.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
-
-        LocalDate logDate = request.getLogDate() != null ? request.getLogDate() : LocalDate.now();
+        LocalDate logDate = req.getLogDate() != null ? req.getLogDate() : LocalDate.now();
+        String unit   = req.getQuantityUnit()  != null ? req.getQuantityUnit()  : "grams";
+        double amount = req.getQuantityAmount() != null ? req.getQuantityAmount() : (req.getQuantityGrams() != null ? req.getQuantityGrams() : 100.0);
+        double qGrams = req.getQuantityGrams()  != null ? req.getQuantityGrams()  : amount;
 
         double calories = 0, protein = 0, carbs = 0, fat = 0, fiber = 0;
-        double goodCals = 0, badCals = 0, neutralCals = 0;
-        String calorieQuality = "MODERATE";
-        String aiAnalysis = request.getAiAnalysis();
-        double resolvedGrams = Optional.ofNullable(request.getQuantityGrams()).orElse(100.0);
-        String quantityDisplay = request.getQuantityDisplay();
+        double goodCal = 0, badCal = 0, carbCal = 0;
+        String aiAnalysis = req.getAiAnalysis();
 
-        if (request.getCalories() != null) {
-            // Already has nutrition from search result
-            calories     = request.getCalories();
-            protein      = Optional.ofNullable(request.getProteinGrams()).orElse(0.0);
-            carbs        = Optional.ofNullable(request.getCarbsGrams()).orElse(0.0);
-            fat          = Optional.ofNullable(request.getFatGrams()).orElse(0.0);
-            fiber        = Optional.ofNullable(request.getFiberGrams()).orElse(0.0);
-            goodCals     = Optional.ofNullable(request.getGoodCalories()).orElse(0.0);
-            badCals      = Optional.ofNullable(request.getBadCalories()).orElse(0.0);
-            neutralCals  = Optional.ofNullable(request.getNeutralCalories()).orElse(calories - goodCals - badCals);
-            calorieQuality = Optional.ofNullable(request.getCalorieQuality()).orElse("MODERATE");
+        if (req.getCalories() != null) {
+            calories  = req.getCalories();
+            protein   = nvl(req.getProteinGrams());
+            carbs     = nvl(req.getCarbsGrams());
+            fat       = nvl(req.getFatGrams());
+            fiber     = nvl(req.getFiberGrams());
+            goodCal   = nvl(req.getGoodCalories(),  r1(protein * 4 + fiber * 2));
+            badCal    = nvl(req.getBadCalories(),    r1(fat * 9));
+            carbCal   = nvl(req.getCarbCalories(),   r1(carbs * 4));
         } else {
-            // Re-analyze via AI
-            FoodDTOs.NutritionInfo n = geminiService.analyzeFoodNutrition(
-                    request.getFoodName(),
-                    request.getQuantityGrams(),
-                    request.getQuantityAmount(),
-                    request.getQuantityUnit()
-            );
+            FoodDTOs.NutritionInfo n = geminiService.analyzeFoodNutrition(req.getFoodName(), amount, unit);
             if (n.isSuccess()) {
-                calories       = n.getCalories();
-                protein        = n.getProteinGrams();
-                carbs          = n.getCarbsGrams();
-                fat            = n.getFatGrams();
-                fiber          = n.getFiberGrams();
-                goodCals       = n.getGoodCalories();
-                badCals        = n.getBadCalories();
-                neutralCals    = n.getNeutralCalories();
-                calorieQuality = n.getCalorieQuality();
-                aiAnalysis     = n.getAiAnalysis();
-                resolvedGrams  = n.getQuantityGrams();
-                quantityDisplay = n.getQuantityDisplay();
+                calories  = n.getCalories();  protein = n.getProteinGrams();
+                carbs     = n.getCarbsGrams(); fat    = n.getFatGrams();
+                fiber     = n.getFiberGrams(); qGrams = n.getQuantityGrams();
+                goodCal   = n.getGoodCalories(); badCal = n.getBadCalories();
+                carbCal   = n.getCarbCalories(); aiAnalysis = n.getAiAnalysis();
             }
         }
 
-        FoodLog foodLog = FoodLog.builder()
-                .userId(userId)
-                .logDate(logDate)
-                .mealType(request.getMealType().toUpperCase())
-                .foodName(request.getFoodName())
-                .quantityGrams(resolvedGrams)
-                .quantityDisplay(quantityDisplay != null ? quantityDisplay : resolvedGrams + "g")
-                .quantityUnit(Optional.ofNullable(request.getQuantityUnit()).orElse("grams"))
-                .quantityAmount(Optional.ofNullable(request.getQuantityAmount()).orElse(resolvedGrams))
-                .calories(calories)
-                .proteinGrams(protein)
-                .carbsGrams(carbs)
-                .fatGrams(fat)
-                .fiberGrams(fiber)
-                .goodCalories(goodCals)
-                .badCalories(badCals)
-                .neutralCalories(neutralCals)
-                .calorieQuality(calorieQuality)
-                .aiAnalysis(aiAnalysis)
-                .createdAt(LocalDateTime.now())
+        FoodLog log = FoodLog.builder()
+                .userId(userId).logDate(logDate).mealType(req.getMealType().toUpperCase())
+                .foodName(req.getFoodName())
+                .quantityAmount(amount).quantityUnit(unit).quantityGrams(qGrams)
+                .calories(calories).proteinGrams(protein).carbsGrams(carbs)
+                .fatGrams(fat).fiberGrams(fiber)
+                .goodCalories(goodCal).badCalories(badCal).carbCalories(carbCal)
+                .aiAnalysis(aiAnalysis).createdAt(LocalDateTime.now())
                 .build();
 
-        return mapToResponse(foodLogRepository.save(foodLog));
+        return mapToResponse(foodLogRepository.save(log));
     }
 
-    /**
-     * Daily summary including good/bad calorie totals
-     */
     public FoodDTOs.DailySummary getDailySummary(String userId, LocalDate date) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-
+        User user = userRepository.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
         if (date == null) date = LocalDate.now();
-
         List<FoodLog> logs = foodLogRepository.findByUserIdAndLogDateOrderByCreatedAtDesc(userId, date);
 
-        double totalCals    = logs.stream().mapToDouble(FoodLog::getCalories).sum();
-        double totalProtein = logs.stream().mapToDouble(FoodLog::getProteinGrams).sum();
-        double totalCarbs   = logs.stream().mapToDouble(FoodLog::getCarbsGrams).sum();
-        double totalFat     = logs.stream().mapToDouble(FoodLog::getFatGrams).sum();
-        double totalFiber   = logs.stream().mapToDouble(FoodLog::getFiberGrams).sum();
-        double totalGood    = logs.stream().mapToDouble(FoodLog::getGoodCalories).sum();
-        double totalBad     = logs.stream().mapToDouble(FoodLog::getBadCalories).sum();
-        double totalNeutral = logs.stream().mapToDouble(FoodLog::getNeutralCalories).sum();
+        double tCals = logs.stream().mapToDouble(FoodLog::getCalories).sum();
+        double tProt = logs.stream().mapToDouble(FoodLog::getProteinGrams).sum();
+        double tCarb = logs.stream().mapToDouble(FoodLog::getCarbsGrams).sum();
+        double tFat  = logs.stream().mapToDouble(FoodLog::getFatGrams).sum();
+        double tFib  = logs.stream().mapToDouble(FoodLog::getFiberGrams).sum();
+        double tGood = logs.stream().mapToDouble(FoodLog::getGoodCalories).sum();
+        double tBad  = logs.stream().mapToDouble(FoodLog::getBadCalories).sum();
+        double tCarbC= logs.stream().mapToDouble(FoodLog::getCarbCalories).sum();
 
-        Map<String, List<FoodLog>> mealGroups = logs.stream()
-                .collect(Collectors.groupingBy(FoodLog::getMealType));
-
+        Map<String, List<FoodLog>> grouped = logs.stream().collect(Collectors.groupingBy(FoodLog::getMealType));
         List<FoodDTOs.MealGroup> meals = List.of("BREAKFAST","LUNCH","DINNER","SNACK").stream()
-                .filter(mealGroups::containsKey)
+                .filter(grouped::containsKey)
                 .map(mt -> {
-                    List<FoodLog> items = mealGroups.get(mt);
+                    List<FoodLog> items = grouped.get(mt);
                     return FoodDTOs.MealGroup.builder()
                             .mealType(mt)
                             .items(items.stream().map(this::mapToResponse).collect(Collectors.toList()))
                             .totalCalories(items.stream().mapToDouble(FoodLog::getCalories).sum())
                             .totalProtein(items.stream().mapToDouble(FoodLog::getProteinGrams).sum())
-                            .goodCalories(items.stream().mapToDouble(FoodLog::getGoodCalories).sum())
-                            .badCalories(items.stream().mapToDouble(FoodLog::getBadCalories).sum())
                             .build();
-                })
-                .collect(Collectors.toList());
+                }).collect(Collectors.toList());
 
-        int    tCal  = user.getDailyCalorieTarget();
-        double tProt = user.getDailyProteinTarget();
-        double tCarb = user.getDailyCarbTarget();
-        double tFat  = user.getDailyFatTarget();
-
-        double goodPct = totalCals > 0 ? round1((totalGood / totalCals) * 100) : 0;
-        double badPct  = totalCals > 0 ? round1((totalBad  / totalCals) * 100) : 0;
+        int    cTarget = user.getDailyCalorieTarget();
+        double pTarget = user.getDailyProteinTarget();
+        double crTarget= user.getDailyCarbTarget();
+        double fTarget = user.getDailyFatTarget();
 
         return FoodDTOs.DailySummary.builder()
                 .date(date)
-                .targetCalories(tCal).targetProtein(tProt).targetCarbs(tCarb).targetFat(tFat)
-                .consumedCalories(round1(totalCals))
-                .consumedProtein(round1(totalProtein))
-                .consumedCarbs(round1(totalCarbs))
-                .consumedFat(round1(totalFat))
-                .consumedFiber(round1(totalFiber))
-                .goodCalories(round1(totalGood))
-                .badCalories(round1(totalBad))
-                .neutralCalories(round1(totalNeutral))
-                .goodCaloriePercent(goodPct)
-                .badCaloriePercent(badPct)
-                .remainingCalories(Math.max(0, tCal - totalCals))
-                .remainingProtein(Math.max(0, tProt - totalProtein))
-                .calorieProgress(tCal  > 0 ? Math.min(100, (totalCals    / tCal)  * 100) : 0)
-                .proteinProgress(tProt > 0 ? Math.min(100, (totalProtein / tProt) * 100) : 0)
-                .carbProgress(   tCarb > 0 ? Math.min(100, (totalCarbs   / tCarb) * 100) : 0)
-                .fatProgress(    tFat  > 0 ? Math.min(100, (totalFat     / tFat)  * 100) : 0)
+                .targetCalories(cTarget).targetProtein(pTarget).targetCarbs(crTarget).targetFat(fTarget)
+                .consumedCalories(r1(tCals)).consumedProtein(r1(tProt))
+                .consumedCarbs(r1(tCarb)).consumedFat(r1(tFat)).consumedFiber(r1(tFib))
+                .goodCalories(r1(tGood)).badCalories(r1(tBad)).carbCalories(r1(tCarbC))
+                .remainingCalories(Math.max(0, cTarget - tCals))
+                .remainingProtein(Math.max(0, pTarget - tProt))
+                .calorieProgress(cTarget  > 0 ? Math.min(100, (tCals / cTarget)  * 100) : 0)
+                .proteinProgress(pTarget  > 0 ? Math.min(100, (tProt / pTarget)  * 100) : 0)
+                .carbProgress(   crTarget > 0 ? Math.min(100, (tCarb / crTarget) * 100) : 0)
+                .fatProgress(    fTarget  > 0 ? Math.min(100, (tFat  / fTarget)  * 100) : 0)
                 .meals(meals)
                 .build();
     }
@@ -193,9 +124,8 @@ public class FoodLogService {
     public List<FoodDTOs.DailySummary> getWeeklySummary(String userId) {
         LocalDate today = LocalDate.now();
         List<FoodDTOs.DailySummary> list = new ArrayList<>();
-        for (LocalDate d = today.minusDays(6); !d.isAfter(today); d = d.plusDays(1)) {
+        for (LocalDate d = today.minusDays(6); !d.isAfter(today); d = d.plusDays(1))
             list.add(getDailySummary(userId, d));
-        }
         return list;
     }
 
@@ -203,25 +133,20 @@ public class FoodLogService {
         foodLogRepository.deleteByIdAndUserId(logId, userId);
     }
 
-    private double round1(double v) { return Math.round(v * 10.0) / 10.0; }
+    private double r1(double v) { return Math.round(v * 10.0) / 10.0; }
+    private double nvl(Double v) { return v != null ? v : 0.0; }
+    private double nvl(Double v, double fallback) { return v != null ? v : fallback; }
 
-    private FoodDTOs.FoodLogResponse mapToResponse(FoodLog log) {
+    private FoodDTOs.FoodLogResponse mapToResponse(FoodLog l) {
         return FoodDTOs.FoodLogResponse.builder()
-                .id(log.getId())
-                .foodName(log.getFoodName())
-                .quantityGrams(log.getQuantityGrams())
-                .quantityDisplay(log.getQuantityDisplay() != null ? log.getQuantityDisplay() : log.getQuantityGrams() + "g")
-                .mealType(log.getMealType())
-                .calories(log.getCalories())
-                .proteinGrams(log.getProteinGrams())
-                .carbsGrams(log.getCarbsGrams())
-                .fatGrams(log.getFatGrams())
-                .fiberGrams(log.getFiberGrams())
-                .goodCalories(log.getGoodCalories())
-                .badCalories(log.getBadCalories())
-                .calorieQuality(log.getCalorieQuality())
-                .logDate(log.getLogDate().toString())
-                .createdAt(log.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                .id(l.getId()).foodName(l.getFoodName())
+                .quantityAmount(l.getQuantityAmount()).quantityUnit(l.getQuantityUnit() != null ? l.getQuantityUnit() : "grams")
+                .quantityGrams(l.getQuantityGrams()).mealType(l.getMealType())
+                .calories(l.getCalories()).proteinGrams(l.getProteinGrams())
+                .carbsGrams(l.getCarbsGrams()).fatGrams(l.getFatGrams()).fiberGrams(l.getFiberGrams())
+                .goodCalories(l.getGoodCalories()).badCalories(l.getBadCalories()).carbCalories(l.getCarbCalories())
+                .logDate(l.getLogDate().toString())
+                .createdAt(l.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 .build();
     }
 }

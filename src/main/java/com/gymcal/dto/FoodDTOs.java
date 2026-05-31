@@ -1,178 +1,98 @@
 package com.gymcal.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import jakarta.validation.constraints.*;
-
 import java.time.LocalDate;
 import java.util.List;
 
 public class FoodDTOs {
 
-    // ─────────────────────────────────────────────────
-    // FOOD SEARCH — now supports both grams AND quantity
-    // e.g. {"foodName":"roti","quantityGrams":100}
-    //   OR {"foodName":"roti","quantityAmount":2,"quantityUnit":"pieces"}
-    //   OR {"foodName":"chicken breast","quantityGrams":150}
-    // ─────────────────────────────────────────────────
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class FoodSearchRequest {
         @NotBlank(message = "Food name is required")
         private String foodName;
-
-        // Option A: grams directly
-        private Double quantityGrams;
-
-        // Option B: natural quantity (e.g. 2 pieces, 1 cup)
-        private Double quantityAmount;   // e.g. 2
-        private String quantityUnit;     // e.g. "pieces", "cups", "ml", "serving"
+        private Double quantityAmount; // e.g. 2 (cups) or 150 (grams)
+        private String quantityUnit;   // grams, pieces, cup, bowl, tbsp, tsp, ml
     }
 
-    // ─────────────────────────────────────────────────
-    // AI NUTRITION RESULT — includes good/bad calories
-    // ─────────────────────────────────────────────────
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class NutritionInfo {
         private String foodName;
-        private double quantityGrams;
-        private String quantityDisplay;  // "2 pieces (100g)" or "150g"
-
-        // Core macros
+        private double quantityAmount;
+        private String quantityUnit;
+        private double quantityGrams;  // converted to grams
         private double calories;
         private double proteinGrams;
         private double carbsGrams;
         private double fatGrams;
         private double fiberGrams;
-
-        // NEW: Good vs Bad calories
-        private double goodCalories;     // from protein + complex carbs + fiber
-        private double badCalories;      // from saturated fat + simple sugars
-        private double neutralCalories;  // healthy fats + complex carbs
-        private String calorieQuality;   // "EXCELLENT" | "GOOD" | "MODERATE" | "POOR"
-        private String qualityReason;    // short explanation
-
-        // Per-100g reference
-        private double caloriePer100g;
-        private double proteinPer100g;
-
+        private double goodCalories;   // protein + fiber cals
+        private double badCalories;    // fat cals
+        private double carbCalories;   // carb cals
+        private String calQuality;     // "Excellent", "Good", "Moderate", "Poor"
         private String aiAnalysis;
         private boolean success;
         private String errorMessage;
     }
 
-    // ─────────────────────────────────────────────────
-    // ADD FOOD LOG REQUEST
-    // ─────────────────────────────────────────────────
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class AddFoodLogRequest {
-        @NotBlank
-        private String foodName;
-
-        private Double quantityGrams;
-        private String quantityDisplay;
-        private String quantityUnit;
+        @NotBlank private String foodName;
         private Double quantityAmount;
-
-        @NotBlank
-        private String mealType;
-
+        private String quantityUnit;
+        private Double quantityGrams;
+        @NotBlank private String mealType;
         private LocalDate logDate;
-
         private Double calories;
         private Double proteinGrams;
         private Double carbsGrams;
         private Double fatGrams;
         private Double fiberGrams;
-
-        // Good/Bad calories (from AI result)
         private Double goodCalories;
         private Double badCalories;
-        private Double neutralCalories;
-        private String calorieQuality;
-
+        private Double carbCalories;
         private String aiAnalysis;
     }
 
-    // ─────────────────────────────────────────────────
-    // DAILY SUMMARY — includes good/bad calorie totals
-    // ─────────────────────────────────────────────────
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class DailySummary {
         private LocalDate date;
-
-        // Targets
         private int targetCalories;
         private double targetProtein;
         private double targetCarbs;
         private double targetFat;
-
-        // Consumed totals
         private double consumedCalories;
         private double consumedProtein;
         private double consumedCarbs;
         private double consumedFat;
         private double consumedFiber;
-
-        // NEW: Good vs Bad calories consumed today
-        private double goodCalories;
-        private double badCalories;
-        private double neutralCalories;
-        private double goodCaloriePercent;   // % of total that are "good"
-        private double badCaloriePercent;    // % of total that are "bad"
-
-        // Remaining
+        private double goodCalories;   // total good cals today
+        private double badCalories;    // total bad cals today
+        private double carbCalories;   // total carb cals today
         private double remainingCalories;
         private double remainingProtein;
-
-        // Meal breakdown
         private List<MealGroup> meals;
-
-        // Progress %
         private double calorieProgress;
         private double proteinProgress;
         private double carbProgress;
         private double fatProgress;
     }
 
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class MealGroup {
         private String mealType;
         private List<FoodLogResponse> items;
         private double totalCalories;
         private double totalProtein;
-        private double goodCalories;
-        private double badCalories;
     }
 
-    // ─────────────────────────────────────────────────
-    // FOOD LOG RESPONSE
-    // ─────────────────────────────────────────────────
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class FoodLogResponse {
         private String id;
         private String foodName;
+        private double quantityAmount;
+        private String quantityUnit;
         private double quantityGrams;
-        private String quantityDisplay;
         private String mealType;
         private double calories;
         private double proteinGrams;
@@ -181,79 +101,22 @@ public class FoodDTOs {
         private double fiberGrams;
         private double goodCalories;
         private double badCalories;
-        private String calorieQuality;
+        private double carbCalories;
         private String logDate;
         private String createdAt;
     }
 
-    // ─────────────────────────────────────────────────
-    // WEEKLY WORKOUT PLAN
-    // ─────────────────────────────────────────────────
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class WorkoutPlan {
-        private String goal;
-        private String activityLevel;
-        private String gender;
-        private String planTitle;
-        private String planDescription;
-        private List<WorkoutDay> days;
-        private List<String> generalTips;
-        private String weeklyNote;
-    }
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class WorkoutDay {
-        private String day;           // Monday, Tuesday...
-        private String type;          // "TRAINING" | "REST" | "ACTIVE_RECOVERY"
-        private String focus;         // "Chest & Triceps", "Cardio", "Rest"
-        private String intensity;     // "High", "Medium", "Low", "Rest"
-        private List<Exercise> exercises;
-        private int estimatedMinutes;
-        private int estimatedCaloriesBurn;
-        private String notes;
-    }
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class Exercise {
-        private String name;
-        private String sets;          // "3 sets"
-        private String reps;          // "8-12 reps" or "30 min"
-        private String rest;          // "60 sec"
-        private String muscleGroup;
-        private String difficulty;    // "Beginner" | "Intermediate" | "Advanced"
-    }
-
-    // ─────────────────────────────────────────────────
-    // GOAL UPDATE REQUEST
-    // ─────────────────────────────────────────────────
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class UpdateGoalRequest {
         private String goal;
         private String activityLevel;
         private Double weightKg;
         private Double heightCm;
         private Integer age;
+        private List<String> healthConditions;
     }
 
-    // ─────────────────────────────────────────────────
-    // USER PROFILE RESPONSE
-    // ─────────────────────────────────────────────────
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class UserProfileResponse {
         private String id;
         private String name;
@@ -270,5 +133,6 @@ public class FoodDTOs {
         private double dailyProteinTarget;
         private double dailyCarbTarget;
         private double dailyFatTarget;
+        private List<String> healthConditions;
     }
 }

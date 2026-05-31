@@ -2,8 +2,6 @@ package com.gymcal.controller;
 
 import com.gymcal.dto.FoodDTOs;
 import com.gymcal.service.FoodLogService;
-import com.gymcal.service.GeminiService;
-import com.gymcal.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
@@ -22,18 +20,11 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class FoodController {
 
-    @Autowired
-    private FoodLogService foodLogService;
-    @Autowired
-    private GeminiService geminiService;
-    @Autowired
-    private UserService userService;
+	@Autowired
+    private  FoodLogService foodLogService;
 
     /**
-     * Search food nutrition via AI
-     * Supports: {"foodName":"roti","quantityGrams":80}
-     *       OR: {"foodName":"dal","quantityAmount":1,"quantityUnit":"cup"}
-     *       OR: {"foodName":"chicken","quantityGrams":150}
+     * Search food nutrition via AI (preview before adding)
      */
     @PostMapping("/search")
     public ResponseEntity<?> searchFood(Authentication auth,
@@ -63,7 +54,7 @@ public class FoodController {
     }
 
     /**
-     * Daily summary (with good/bad calorie breakdown)
+     * Get daily summary (default: today)
      */
     @GetMapping("/daily")
     public ResponseEntity<?> getDailySummary(
@@ -79,7 +70,7 @@ public class FoodController {
     }
 
     /**
-     * Weekly summary
+     * Get weekly summary (last 7 days)
      */
     @GetMapping("/weekly")
     public ResponseEntity<?> getWeeklySummary(Authentication auth) {
@@ -93,7 +84,7 @@ public class FoodController {
     }
 
     /**
-     * Delete food log entry
+     * Delete a food log entry
      */
     @DeleteMapping("/log/{logId}")
     public ResponseEntity<?> deleteFoodLog(Authentication auth, @PathVariable String logId) {
@@ -101,29 +92,6 @@ public class FoodController {
             String userId = (String) auth.getPrincipal();
             foodLogService.deleteFoodLog(userId, logId);
             return ResponseEntity.ok(Map.of("message", "Food log deleted successfully"));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
-    }
-
-    /**
-     * NEW: Generate weekly workout plan for the logged-in user
-     * GET /api/food/workout-plan
-     */
-    @GetMapping("/workout-plan")
-    public ResponseEntity<?> getWorkoutPlan(Authentication auth) {
-        try {
-            String userId = (String) auth.getPrincipal();
-            FoodDTOs.UserProfileResponse profile = userService.getProfile(userId);
-            FoodDTOs.WorkoutPlan plan = geminiService.generateWorkoutPlan(
-                    profile.getGoal(),
-                    profile.getActivityLevel(),
-                    profile.getGender(),
-                    profile.getWeightKg(),
-                    profile.getHeightCm(),
-                    profile.getAge()
-            );
-            return ResponseEntity.ok(plan);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
