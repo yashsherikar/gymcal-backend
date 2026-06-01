@@ -42,10 +42,10 @@ public class WaterService {
         User user   = userRepo.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
         LocalDate today = LocalDate.now();
         double target   = calculateWaterTarget(user);
-        WaterLog log    = waterRepo.findByUserIdAndLogDate(userId, today).orElse(null);
-        double consumed = log != null ? log.getTotalMl()   : 0;
-        double fromFood = log != null ? log.getFromFoodMl(): 0;
-        int glasses     = log != null ? log.getGlassCount(): 0;
+        WaterLog waterLog = waterRepo.findByUserIdAndLogDate(userId, today).orElse(null);
+        double consumed = waterLog != null ? waterLog.getTotalMl()    : 0;
+        double fromFood = waterLog != null ? waterLog.getFromFoodMl() : 0;
+        int glasses     = waterLog != null ? waterLog.getGlassCount() : 0;
         return buildMap(target, consumed, fromFood, glasses);
     }
 
@@ -54,14 +54,14 @@ public class WaterService {
         User user = userRepo.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
         LocalDate today = LocalDate.now();
         double target   = calculateWaterTarget(user);
-        WaterLog log    = getOrCreate(userId, today, target);
+        WaterLog waterLog = getOrCreate(userId, today, target);
 
-        log.setTotalMl(Math.max(0, log.getTotalMl() + ml));
-        if (ml > 0) log.setGlassCount(log.getGlassCount() + 1);
-        else        log.setGlassCount(Math.max(0, log.getGlassCount() - 1));
-        log.setUpdatedAt(LocalDateTime.now());
-        waterRepo.save(log);
-        return buildMap(target, log.getTotalMl(), log.getFromFoodMl(), log.getGlassCount());
+        waterLog.setTotalMl(Math.max(0, waterLog.getTotalMl() + ml));
+        if (ml > 0) waterLog.setGlassCount(waterLog.getGlassCount() + 1);
+        else        waterLog.setGlassCount(Math.max(0, waterLog.getGlassCount() - 1));
+        waterLog.setUpdatedAt(LocalDateTime.now());
+        waterRepo.save(waterLog);
+        return buildMap(target, waterLog.getTotalMl(), waterLog.getFromFoodMl(), waterLog.getGlassCount());
     }
 
     /** Auto-add water from food log (called by FoodLogService) */
@@ -70,13 +70,13 @@ public class WaterService {
         try {
             User user = userRepo.findById(userId).orElse(null);
             if (user == null) return;
-            LocalDate today = LocalDate.now();
-            double target   = calculateWaterTarget(user);
-            WaterLog log    = getOrCreate(userId, today, target);
-            log.setTotalMl(log.getTotalMl() + waterMl);
-            log.setFromFoodMl(log.getFromFoodMl() + waterMl);
-            log.setUpdatedAt(LocalDateTime.now());
-            waterRepo.save(log);
+            LocalDate today  = LocalDate.now();
+            double target    = calculateWaterTarget(user);
+            WaterLog waterLog = getOrCreate(userId, today, target);
+            waterLog.setTotalMl(waterLog.getTotalMl() + waterMl);
+            waterLog.setFromFoodMl(waterLog.getFromFoodMl() + waterMl);
+            waterLog.setUpdatedAt(LocalDateTime.now());
+            waterRepo.save(waterLog);
             log.info("Auto-added {}ml water from food for user {}", waterMl, userId);
         } catch (Exception e) {
             log.error("addWaterFromFood failed: {}", e.getMessage());
