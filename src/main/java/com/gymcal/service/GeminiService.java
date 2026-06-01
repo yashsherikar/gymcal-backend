@@ -62,9 +62,12 @@ public class GeminiService {
 
     private String buildFoodPrompt(String foodName, double amount, String unit) {
         return String.format(
-            "Nutrition expert. Return ONLY JSON for %.1f %s of %s. " +
-            "Convert to grams first (1 cup≈240ml, 1 bowl≈300ml, 1 piece banana≈120g, 1 tbsp≈15ml). " +
-            "Include waterContentMl (water content in ml — high for fruits/juices/soups/milk, low for dry foods). " +
+            "Nutrition expert. Return ONLY JSON for %.1f %s of \"%s\". " +
+            "Convert to grams/ml first (1 cup≈240ml, 1 bowl≈300ml, 1 piece banana≈120g, 1 tbsp≈15ml, 1 can soda≈355ml). " +
+            "IMPORTANT for waterContentMl: beverages (cola, juice, soda, tea, coffee, milk, energy drinks, water) " +
+            "have waterContentMl equal to their volume in ml. " +
+            "Diet Coke 330ml → waterContentMl=330. Orange juice 1 cup → waterContentMl=240. " +
+            "Fruits: watermelon 200g → waterContentMl=184. Dry foods (roti, rice, nuts) → waterContentMl is small (5-20). " +
             "JSON keys: foodName, quantityGrams, calories, proteinGrams, carbsGrams, fatGrams, fiberGrams, " +
             "waterContentMl, goodCalories(proteinGrams*4+fiberGrams*2), badCalories(fatGrams*9), " +
             "carbCalories(carbsGrams*4), calQuality(Excellent/Good/Moderate/Poor), aiAnalysis(one sentence). No markdown.",

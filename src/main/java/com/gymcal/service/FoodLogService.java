@@ -75,10 +75,10 @@ public class FoodLogService {
 
         FoodLog saved = foodLogRepository.save(foodLog);
 
-        // AUTO-ADD water from food (juice, fruits, milk etc.)
-        if (waterMl > 5) {
+        // AUTO-ADD water from food/drinks (juice, soda, milk, fruits, soups etc.)
+        if (waterMl > 0) {
             waterService.addWaterFromFood(userId, waterMl);
-            log.info("Auto-added {}ml water from food '{}' for user {}", waterMl, req.getFoodName(), userId);
+            log.info("Auto-added {}ml water from '{}' for user {}", waterMl, req.getFoodName(), userId);
         }
 
         return mapToResponse(saved);
