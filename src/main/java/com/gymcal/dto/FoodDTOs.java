@@ -26,6 +26,7 @@ public class FoodDTOs {
         private double carbsGrams;
         private double fatGrams;
         private double fiberGrams;
+        private double waterContentMl;
         private double goodCalories;   // protein + fiber cals
         private double badCalories;    // fat cals
         private double carbCalories;   // carb cals
@@ -48,6 +49,7 @@ public class FoodDTOs {
         private Double carbsGrams;
         private Double fatGrams;
         private Double fiberGrams;
+        private Double waterContentMl;
         private Double goodCalories;
         private Double badCalories;
         private Double carbCalories;
@@ -66,6 +68,7 @@ public class FoodDTOs {
         private double consumedCarbs;
         private double consumedFat;
         private double consumedFiber;
+        private double totalWaterFromFood;
         private double goodCalories;   // total good cals today
         private double badCalories;    // total bad cals today
         private double carbCalories;   // total carb cals today
@@ -99,6 +102,7 @@ public class FoodDTOs {
         private double carbsGrams;
         private double fatGrams;
         private double fiberGrams;
+        private double waterContentMl;
         private double goodCalories;
         private double badCalories;
         private double carbCalories;

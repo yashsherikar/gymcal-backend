@@ -29,6 +29,7 @@ public class FoodLog {
     private double carbsGrams;
     private double fatGrams;
     private double fiberGrams;
+    private double waterContentMl;  // water content in ml from this food
 
     // Good vs Bad calories
     private double goodCalories;   // from protein + fiber

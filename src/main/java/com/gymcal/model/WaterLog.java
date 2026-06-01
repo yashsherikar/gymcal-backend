@@ -14,8 +14,9 @@ public class WaterLog {
     @Id private String id;
     private String userId;
     private LocalDate logDate;
-    private double totalMl;          // total consumed today in ml
-    private int glassCount;          // number of glasses added
-    private double targetMl;         // daily target in ml
+    private double totalMl;       // total = drinks + food water
+    private double fromFoodMl;    // auto-added from food logs (juice, fruits etc.)
+    private int glassCount;       // manually added glasses
+    private double targetMl;
     private LocalDateTime updatedAt;
 }

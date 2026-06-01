@@ -18,77 +18,93 @@ public class WaterService {
     private final WaterLogRepository waterRepo;
     private final UserRepository userRepo;
 
-    // Calculate daily water target in ml based on user profile
     public double calculateWaterTarget(User user) {
-        double weight = user.getWeightKg();
-        double height = user.getHeightCm();
-        String gender = user.getGender() != null ? user.getGender().toUpperCase() : "MALE";
+        double weight   = user.getWeightKg();
+        double height   = user.getHeightCm();
+        String gender   = user.getGender()        != null ? user.getGender().toUpperCase()        : "MALE";
         String activity = user.getActivityLevel() != null ? user.getActivityLevel().toUpperCase() : "MODERATE";
 
-        // Base: 35ml/kg (men), 31ml/kg (women)
         double base = gender.equals("FEMALE") ? weight * 31 : weight * 35;
-
-        // Activity multiplier
         double multiplier = switch (activity) {
-            case "SEDENTARY" -> 1.0;
-            case "LIGHT"     -> 1.1;
-            case "MODERATE"  -> 1.2;
-            case "ACTIVE"    -> 1.35;
+            case "SEDENTARY"   -> 1.0;
+            case "LIGHT"       -> 1.1;
+            case "MODERATE"    -> 1.2;
+            case "ACTIVE"      -> 1.35;
             case "VERY_ACTIVE" -> 1.5;
-            default          -> 1.2;
+            default            -> 1.2;
         };
-
-        // Height bonus (taller people need more)
         double heightBonus = height > 170 ? (height - 170) * 5 : 0;
-
         double target = (base * multiplier) + heightBonus;
-
-        // Clamp between 1500ml and 4000ml
         return Math.min(4000, Math.max(1500, Math.round(target / 50.0) * 50));
     }
 
     public Map<String, Object> getWaterStatus(String userId) {
-        User user = userRepo.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
+        User user   = userRepo.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
         LocalDate today = LocalDate.now();
-        double target = calculateWaterTarget(user);
-        WaterLog log = waterRepo.findByUserIdAndLogDate(userId, today).orElse(null);
-        double consumed = log != null ? log.getTotalMl() : 0;
-        int glasses = log != null ? log.getGlassCount() : 0;
-
-        Map<String, Object> res = new HashMap<>();
-        res.put("targetMl", target);
-        res.put("consumedMl", consumed);
-        res.put("glassCount", glasses);
-        res.put("remainingMl", Math.max(0, target - consumed));
-        res.put("percentage", Math.min(100, Math.round((consumed / target) * 100)));
-        res.put("glassSize", 250); // ml per glass
-        res.put("targetGlasses", (int) Math.ceil(target / 250));
-        res.put("date", today.toString());
-        return res;
+        double target   = calculateWaterTarget(user);
+        WaterLog log    = waterRepo.findByUserIdAndLogDate(userId, today).orElse(null);
+        double consumed = log != null ? log.getTotalMl()   : 0;
+        double fromFood = log != null ? log.getFromFoodMl(): 0;
+        int glasses     = log != null ? log.getGlassCount(): 0;
+        return buildMap(target, consumed, fromFood, glasses);
     }
 
+    /** Add water manually (glass click, custom ml, or negative to remove) */
     public Map<String, Object> addWater(String userId, double ml) {
         User user = userRepo.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
         LocalDate today = LocalDate.now();
-        double target = calculateWaterTarget(user);
-
-        WaterLog log = waterRepo.findByUserIdAndLogDate(userId, today)
-                .orElse(WaterLog.builder().userId(userId).logDate(today).totalMl(0).glassCount(0).targetMl(target).build());
+        double target   = calculateWaterTarget(user);
+        WaterLog log    = getOrCreate(userId, today, target);
 
         log.setTotalMl(Math.max(0, log.getTotalMl() + ml));
-        log.setGlassCount(ml > 0 ? log.getGlassCount() + 1 : Math.max(0, log.getGlassCount() - 1));
-        log.setTargetMl(target);
+        if (ml > 0) log.setGlassCount(log.getGlassCount() + 1);
+        else        log.setGlassCount(Math.max(0, log.getGlassCount() - 1));
         log.setUpdatedAt(LocalDateTime.now());
         waterRepo.save(log);
+        return buildMap(target, log.getTotalMl(), log.getFromFoodMl(), log.getGlassCount());
+    }
 
+    /** Auto-add water from food log (called by FoodLogService) */
+    public void addWaterFromFood(String userId, double waterMl) {
+        if (waterMl <= 0) return;
+        try {
+            User user = userRepo.findById(userId).orElse(null);
+            if (user == null) return;
+            LocalDate today = LocalDate.now();
+            double target   = calculateWaterTarget(user);
+            WaterLog log    = getOrCreate(userId, today, target);
+            log.setTotalMl(log.getTotalMl() + waterMl);
+            log.setFromFoodMl(log.getFromFoodMl() + waterMl);
+            log.setUpdatedAt(LocalDateTime.now());
+            waterRepo.save(log);
+            log.info("Auto-added {}ml water from food for user {}", waterMl, userId);
+        } catch (Exception e) {
+            log.error("addWaterFromFood failed: {}", e.getMessage());
+        }
+    }
+
+    private WaterLog getOrCreate(String userId, LocalDate date, double target) {
+        return waterRepo.findByUserIdAndLogDate(userId, date)
+                .orElse(WaterLog.builder()
+                        .userId(userId).logDate(date)
+                        .totalMl(0).glassCount(0).fromFoodMl(0)
+                        .targetMl(target).updatedAt(LocalDateTime.now())
+                        .build());
+    }
+
+    private Map<String, Object> buildMap(double target, double consumed, double fromFood, int glasses) {
+        int pct = (int) Math.min(100, Math.round((consumed / target) * 100));
         Map<String, Object> res = new HashMap<>();
-        res.put("targetMl", target);
-        res.put("consumedMl", log.getTotalMl());
-        res.put("glassCount", log.getGlassCount());
-        res.put("remainingMl", Math.max(0, target - log.getTotalMl()));
-        res.put("percentage", Math.min(100, Math.round((log.getTotalMl() / target) * 100)));
-        res.put("glassSize", 250);
-        res.put("targetGlasses", (int) Math.ceil(target / 250));
+        res.put("targetMl",     target);
+        res.put("consumedMl",   consumed);
+        res.put("fromFoodMl",   fromFood);
+        res.put("drinkMl",      Math.max(0, consumed - fromFood));
+        res.put("glassCount",   glasses);
+        res.put("remainingMl",  Math.max(0, target - consumed));
+        res.put("percentage",   pct);
+        res.put("glassSize",    250);
+        res.put("targetGlasses",(int) Math.ceil(target / 250));
+        res.put("date",         LocalDate.now().toString());
         return res;
     }
 }

@@ -20,6 +20,7 @@ public class WaterController {
         catch (Exception e) { return ResponseEntity.badRequest().body(Map.of("error", e.getMessage())); }
     }
 
+    // Add water: { "ml": 320 }  or  { "ml": -250 } to remove
     @PostMapping("/add")
     public ResponseEntity<?> addWater(Authentication auth, @RequestBody Map<String, Object> body) {
         try {
