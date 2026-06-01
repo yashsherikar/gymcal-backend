@@ -9,7 +9,7 @@ public class WorkoutDTOs {
     @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class GeneratePlanRequest {
         private List<String> healthConditions;
-        private String fitnessLevel; // BEGINNER, INTERMEDIATE, ADVANCED
+        private String fitnessLevel;
         private Integer workoutDaysPerWeek;
         private List<String> equipment;
         private String additionalNotes;
@@ -26,7 +26,14 @@ public class WorkoutDTOs {
         private String generalAdvice;
         private String safetyNotes;
         private int estimatedWeeklyCaloriesBurned;
+        private double generatedAtWeight;
         private String createdAt;
         private boolean isActive;
+        // Weight change detection
+        private boolean weightChanged;
+        private double weightChangeDelta;
+        private double currentWeight;
+        private double planWeight;
+        private boolean weightChangePositive;
     }
 }

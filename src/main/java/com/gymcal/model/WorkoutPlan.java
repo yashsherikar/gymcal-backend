@@ -21,6 +21,10 @@ public class WorkoutPlan {
     private int estimatedWeeklyCaloriesBurned;
     private LocalDateTime createdAt;
     private boolean isActive;
+    private double generatedAtWeight;   // weight when plan was generated
+    private String fitnessLevel;
+    private int workoutDaysPerWeek;
+    private List<String> equipment;
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class WorkoutDay {

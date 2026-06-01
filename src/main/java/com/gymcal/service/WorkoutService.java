@@ -22,77 +22,138 @@ public class WorkoutService {
     private final GeminiService geminiService;
     private final ObjectMapper mapper = new ObjectMapper();
 
+    // Weight change threshold to trigger auto-regeneration (in kg)
+    private static final double WEIGHT_CHANGE_THRESHOLD = 2.0;
+
     public WorkoutDTOs.WorkoutPlanResponse generatePlan(String userId, WorkoutDTOs.GeneratePlanRequest req) {
         User user = userRepo.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
 
-        // Merge health conditions
         List<String> conditions = new ArrayList<>(req.getHealthConditions() != null ? req.getHealthConditions() : new ArrayList<>());
         if (user.getHealthConditions() != null)
             user.getHealthConditions().forEach(c -> { if (!conditions.contains(c)) conditions.add(c); });
-
-        // Save conditions to user
         user.setHealthConditions(conditions);
         userRepo.save(user);
 
-        String prompt = buildPrompt(user, req, conditions);
-        String raw = geminiService.generateResponse(prompt);
+        String raw = geminiService.generateResponse(buildPrompt(user, req, conditions));
         log.info("Workout plan raw length: {}", raw.length());
 
-        WorkoutPlan plan = parsePlan(raw, user, conditions);
+        WorkoutPlan plan = parsePlan(raw, user, req, conditions);
         plan.setUserId(userId);
         plan.setCreatedAt(LocalDateTime.now());
         plan.setActive(true);
+        plan.setGeneratedAtWeight(user.getWeightKg());
 
-        // Deactivate previous
-        workoutRepo.findByUserIdAndIsActiveTrue(userId).ifPresent(old -> {
-            old.setActive(false); workoutRepo.save(old);
-        });
+        // Save settings for auto-regeneration
+        int days = req.getWorkoutDaysPerWeek() != null ? req.getWorkoutDaysPerWeek() : 4;
+        plan.setWorkoutDaysPerWeek(days);
+        plan.setFitnessLevel(req.getFitnessLevel() != null ? req.getFitnessLevel() : "INTERMEDIATE");
+        plan.setEquipment(req.getEquipment() != null ? req.getEquipment() : List.of("NONE"));
+
+        // Deactivate old plans
+        workoutRepo.findByUserIdAndIsActiveTrue(userId).ifPresent(old -> { old.setActive(false); workoutRepo.save(old); });
 
         return toResponse(workoutRepo.save(plan));
     }
 
+    /**
+     * Get active plan — checks if weight has changed significantly.
+     * Returns plan with weightChanged=true flag if regeneration is needed.
+     */
     public WorkoutDTOs.WorkoutPlanResponse getActivePlan(String userId) {
-        return workoutRepo.findByUserIdAndIsActiveTrue(userId).map(this::toResponse).orElse(null);
+        User user = userRepo.findById(userId).orElse(null);
+        Optional<WorkoutPlan> planOpt = workoutRepo.findByUserIdAndIsActiveTrue(userId);
+        if (planOpt.isEmpty()) return null;
+
+        WorkoutPlan plan = planOpt.get();
+        WorkoutDTOs.WorkoutPlanResponse resp = toResponse(plan);
+
+        // Check weight change
+        if (user != null && plan.getGeneratedAtWeight() > 0) {
+            double weightChange = user.getWeightKg() - plan.getGeneratedAtWeight();
+            double absChange = Math.abs(weightChange);
+
+            if (absChange >= WEIGHT_CHANGE_THRESHOLD) {
+                resp.setWeightChanged(true);
+                resp.setWeightChangeDelta(weightChange);
+                resp.setCurrentWeight(user.getWeightKg());
+                resp.setPlanWeight(plan.getGeneratedAtWeight());
+
+                // Determine if goal is closer or further based on goal type
+                String goal = user.getGoal();
+                boolean isPositive = false;
+                if ("WEIGHT_LOSS".equals(goal) && weightChange < 0)      isPositive = true;
+                else if ("MUSCLE_GAIN".equals(goal) && weightChange > 0) isPositive = true;
+                resp.setWeightChangePositive(isPositive);
+            }
+        }
+        return resp;
+    }
+
+    /**
+     * Auto-regenerate plan with same settings after weight update
+     */
+    public WorkoutDTOs.WorkoutPlanResponse autoRegeneratePlan(String userId) {
+        User user = userRepo.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
+        Optional<WorkoutPlan> oldPlan = workoutRepo.findByUserIdAndIsActiveTrue(userId);
+
+        WorkoutDTOs.GeneratePlanRequest req = new WorkoutDTOs.GeneratePlanRequest();
+        req.setHealthConditions(user.getHealthConditions());
+        if (oldPlan.isPresent()) {
+            req.setFitnessLevel(oldPlan.get().getFitnessLevel());
+            req.setWorkoutDaysPerWeek(oldPlan.get().getWorkoutDaysPerWeek());
+            req.setEquipment(oldPlan.get().getEquipment());
+        } else {
+            req.setFitnessLevel("INTERMEDIATE");
+            req.setWorkoutDaysPerWeek(4);
+            req.setEquipment(List.of("NONE"));
+        }
+        req.setAdditionalNotes("Updated plan due to weight change. Current weight: " + user.getWeightKg() + "kg");
+        return generatePlan(userId, req);
     }
 
     private String buildPrompt(User user, WorkoutDTOs.GeneratePlanRequest req, List<String> conditions) {
         int days = req.getWorkoutDaysPerWeek() != null ? req.getWorkoutDaysPerWeek() : 4;
-        String level  = req.getFitnessLevel() != null ? req.getFitnessLevel() : "INTERMEDIATE";
-        String equip  = req.getEquipment()    != null ? String.join(", ", req.getEquipment()) : "NONE (bodyweight only)";
-        String conds  = conditions.isEmpty() ? "None" : String.join(", ", conditions);
-        String notes  = req.getAdditionalNotes() != null ? req.getAdditionalNotes() : "None";
+        String level = req.getFitnessLevel() != null ? req.getFitnessLevel() : "INTERMEDIATE";
+        String equip = req.getEquipment() != null ? String.join(", ", req.getEquipment()) : "NONE";
+        String conds = conditions.isEmpty() ? "None" : String.join(", ", conditions);
+        String notes = req.getAdditionalNotes() != null ? req.getAdditionalNotes() : "None";
+
+        // Calculate goal progress message
+        String goalNote = "";
+        if (req.getAdditionalNotes() != null && req.getAdditionalNotes().contains("weight change")) {
+            goalNote = "Note: This is an updated plan due to weight change. Adjust intensity accordingly.";
+        }
 
         return String.format("""
-You are a certified personal trainer and medical-aware fitness coach. Create a safe, effective weekly workout plan.
+You are a certified personal trainer. Create a safe, effective weekly workout plan.
 
 USER PROFILE:
 - Name: %s | Age: %d | Gender: %s
-- Weight: %.1f kg | Height: %.1f cm | BMI: %.1f (%s)
+- Current Weight: %.1f kg | Height: %.1f cm | BMI: %.1f (%s)
 - Goal: %s | Activity: %s | Fitness Level: %s
 - Workout days/week: %d | Equipment: %s
 - Health Conditions: %s
-- Notes: %s
+- Notes: %s %s
 
-MEDICAL SAFETY RULES (MUST FOLLOW):
-- Heart disease/Hypertension: Low-intensity only, HR max 60%%, no heavy lifting, no inverted poses, mandatory 5min warmup/cooldown
-- Asthma: Avoid cold air exercises, include rest intervals every 10min, no sprints
-- Diabetes: Include post-workout glucose monitoring note, avoid fasting workouts
-- Knee/joint issues: No high-impact (jumping, running), use low-impact alternatives (cycling, swimming, walking)
-- Obesity (BMI>30): Low-impact cardio, pool exercises recommended, no joint stress
-- None: Standard programming based on goal
+MEDICAL SAFETY RULES:
+- Heart disease/Hypertension: Low-intensity only, HR max 60%%, no heavy lifting, mandatory warmup/cooldown
+- Asthma: Include rest intervals, no sprints, avoid cold exercises
+- Diabetes: Include post-workout glucose note
+- Knee/Joint pain: No high-impact, use low-impact alternatives
+- Obesity (BMI>30): Low-impact cardio only, no joint stress
 
-GOAL-SPECIFIC RULES:
-- WEIGHT_LOSS: 60%% cardio + 40%% strength, calorie deficit exercises, HIIT if no heart issues
-- MUSCLE_GAIN: 70%% strength + 30%% cardio, progressive overload, compound movements
+GOAL RULES:
+- WEIGHT_LOSS: 60%% cardio + 40%% strength, calorie burning focus
+- MUSCLE_GAIN: 70%% strength + 30%% cardio, progressive overload
 - MAINTAIN: Balanced 50/50
-- RECOMPOSITION: Circuit training, full body 3x/week
+- RECOMPOSITION: Circuit training, full body
 
-Return ONLY valid JSON (no markdown, no explanation):
+Return ONLY valid JSON (no markdown):
 {
   "planName": "string",
   "difficultyLevel": "string",
-  "generalAdvice": "2-3 personalized sentences",
-  "safetyNotes": "specific safety notes based on health conditions",
+  "generalAdvice": "2-3 personalized sentences mentioning current weight and goal",
+  "safetyNotes": "specific safety notes based on health conditions, empty string if none",
   "estimatedWeeklyCaloriesBurned": number,
   "weeklyPlan": [
     {
@@ -100,33 +161,32 @@ Return ONLY valid JSON (no markdown, no explanation):
       "focus": "Upper Body Strength",
       "isRestDay": false,
       "estimatedDuration": 45,
-      "estimatedCaloriesBurned": 300,
+      "estimatedCaloriesBurned": 350,
       "exercises": [
         {
           "name": "Push-ups",
           "category": "Strength",
           "sets": "3",
-          "reps": "10-12",
+          "reps": "12-15",
           "duration": "",
           "rest": "60 sec",
-          "instructions": "Keep core tight, lower chest to floor",
+          "instructions": "Keep core tight",
           "modification": "Knee push-ups if needed"
         }
       ]
     }
   ]
 }
-Generate exactly 7 days (Monday-Sunday). %d days workout, rest on others. Each workout day must have 4-6 exercises.
+Generate exactly 7 days (Monday-Sunday). SUNDAY IS ALWAYS A MANDATORY REST DAY (isRestDay: true). Distribute %d workout days across Monday-Saturday only. Each workout day: 4-6 exercises.
 """, user.getName(), user.getAge(), user.getGender(),
     user.getWeightKg(), user.getHeightCm(), user.getBmi(), user.getBmiCategory(),
-    user.getGoal(), user.getActivityLevel(), level, days, equip, conds, notes, days);
+    user.getGoal(), user.getActivityLevel(), level, days, equip, conds, notes, goalNote, days);
     }
 
-    private WorkoutPlan parsePlan(String raw, User user, List<String> conditions) {
+    private WorkoutPlan parsePlan(String raw, User user, WorkoutDTOs.GeneratePlanRequest req, List<String> conditions) {
         try {
             String cleaned = raw.trim();
-            if (cleaned.contains("```"))
-                cleaned = cleaned.replaceAll("(?s)```[a-zA-Z]*\\s*", "").replace("```", "").trim();
+            if (cleaned.contains("```")) cleaned = cleaned.replaceAll("(?s)```[a-zA-Z]*\\s*", "").replace("```","").trim();
             int s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}');
             if (s >= 0 && e > s) cleaned = cleaned.substring(s, e + 1);
             JsonNode node = mapper.readTree(cleaned);
@@ -134,26 +194,25 @@ Generate exactly 7 days (Monday-Sunday). %d days workout, rest on others. Each w
             List<WorkoutPlan.WorkoutDay> days = new ArrayList<>();
             for (JsonNode d : node.path("weeklyPlan")) {
                 List<WorkoutPlan.Exercise> exList = new ArrayList<>();
-                for (JsonNode ex : d.path("exercises")) {
+                for (JsonNode ex : d.path("exercises"))
                     exList.add(WorkoutPlan.Exercise.builder()
-                            .name(ex.path("name").asText(""))
-                            .category(ex.path("category").asText(""))
-                            .sets(ex.path("sets").asText(""))
-                            .reps(ex.path("reps").asText(""))
-                            .duration(ex.path("duration").asText(""))
-                            .rest(ex.path("rest").asText(""))
-                            .instructions(ex.path("instructions").asText(""))
-                            .modification(ex.path("modification").asText(""))
+                            .name(ex.path("name").asText("")).category(ex.path("category").asText(""))
+                            .sets(ex.path("sets").asText("")).reps(ex.path("reps").asText(""))
+                            .duration(ex.path("duration").asText("")).rest(ex.path("rest").asText(""))
+                            .instructions(ex.path("instructions").asText("")).modification(ex.path("modification").asText(""))
                             .build());
-                }
+                String dayName = d.path("day").asText("");
+                // Sunday is ALWAYS rest — no exceptions
+                boolean isSunday = "Sunday".equalsIgnoreCase(dayName);
+                boolean isRest = isSunday || d.path("isRestDay").asBoolean(false);
                 days.add(WorkoutPlan.WorkoutDay.builder()
-                        .day(d.path("day").asText("")).focus(d.path("focus").asText(""))
-                        .isRestDay(d.path("isRestDay").asBoolean(false))
-                        .estimatedDuration(d.path("estimatedDuration").asInt(0))
-                        .estimatedCaloriesBurned(d.path("estimatedCaloriesBurned").asInt(0))
-                        .exercises(exList).build());
+                        .day(dayName)
+                        .focus(isSunday ? "Rest & Recovery (Sunday)" : d.path("focus").asText(""))
+                        .isRestDay(isRest)
+                        .estimatedDuration(isRest ? 0 : d.path("estimatedDuration").asInt(0))
+                        .estimatedCaloriesBurned(isRest ? 0 : d.path("estimatedCaloriesBurned").asInt(0))
+                        .exercises(isRest ? new ArrayList<>() : exList).build());
             }
-
             return WorkoutPlan.builder()
                     .planName(node.path("planName").asText("My Workout Plan"))
                     .goal(user.getGoal()).difficultyLevel(node.path("difficultyLevel").asText("Intermediate"))
@@ -166,7 +225,7 @@ Generate exactly 7 days (Monday-Sunday). %d days workout, rest on others. Each w
             log.error("parsePlan failed: {}", e.getMessage());
             return WorkoutPlan.builder().planName("Workout Plan").goal(user.getGoal())
                     .healthConditions(conditions).weeklyPlan(new ArrayList<>())
-                    .generalAdvice("Plan generation failed. Please try again.").build();
+                    .generalAdvice("Generation failed. Please try again.").build();
         }
     }
 
@@ -177,6 +236,7 @@ Generate exactly 7 days (Monday-Sunday). %d days workout, rest on others. Each w
                 .weeklyPlan(p.getWeeklyPlan()).generalAdvice(p.getGeneralAdvice())
                 .safetyNotes(p.getSafetyNotes())
                 .estimatedWeeklyCaloriesBurned(p.getEstimatedWeeklyCaloriesBurned())
+                .generatedAtWeight(p.getGeneratedAtWeight())
                 .createdAt(p.getCreatedAt() != null ? p.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) : "")
                 .isActive(p.isActive()).build();
     }

@@ -16,24 +16,22 @@ public class WorkoutController {
     private final WorkoutService workoutService;
 
     @PostMapping("/generate")
-    public ResponseEntity<?> generatePlan(Authentication auth,
-                                          @RequestBody WorkoutDTOs.GeneratePlanRequest req) {
-        try {
-            String userId = (String) auth.getPrincipal();
-            return ResponseEntity.ok(workoutService.generatePlan(userId, req));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+    public ResponseEntity<?> generatePlan(Authentication auth, @RequestBody WorkoutDTOs.GeneratePlanRequest req) {
+        try { return ResponseEntity.ok(workoutService.generatePlan((String) auth.getPrincipal(), req)); }
+        catch (Exception e) { return ResponseEntity.badRequest().body(Map.of("error", e.getMessage())); }
     }
 
     @GetMapping("/active")
     public ResponseEntity<?> getActivePlan(Authentication auth) {
         try {
-            String userId = (String) auth.getPrincipal();
-            WorkoutDTOs.WorkoutPlanResponse plan = workoutService.getActivePlan(userId);
+            WorkoutDTOs.WorkoutPlanResponse plan = workoutService.getActivePlan((String) auth.getPrincipal());
             return plan != null ? ResponseEntity.ok(plan) : ResponseEntity.ok(Map.of("message", "No active plan"));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+        } catch (Exception e) { return ResponseEntity.badRequest().body(Map.of("error", e.getMessage())); }
+    }
+
+    @PostMapping("/regenerate")
+    public ResponseEntity<?> regeneratePlan(Authentication auth) {
+        try { return ResponseEntity.ok(workoutService.autoRegeneratePlan((String) auth.getPrincipal())); }
+        catch (Exception e) { return ResponseEntity.badRequest().body(Map.of("error", e.getMessage())); }
     }
 }
