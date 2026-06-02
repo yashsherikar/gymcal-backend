@@ -19,139 +19,64 @@ import java.time.Duration;
 @Service
 public class GeminiService {
 
-    private static final String GEMINI_URL =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=";
+    private static final String GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+    // Fast model for food nutrition
+    private static final String FOOD_MODEL    = "llama-3.1-8b-instant";
+    // Powerful model for workout plan generation
+    private static final String WORKOUT_MODEL = "llama-3.3-70b-versatile";
 
-    @Value("${gemini.api.key}")
+    @Value("${groq.api.key}")
     private String apiKey;
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(30))
-            .build();
+            .connectTimeout(Duration.ofSeconds(45)).build();
+
+    @jakarta.annotation.PostConstruct
+    public void init() {
+        if (apiKey == null || apiKey.isBlank() || apiKey.equals("your-groq-key-here"))
+            log.error("===== GROQ_API_KEY is NOT SET! =====");
+        else
+            log.info("===== GeminiService(Groq) ready. Key: {}... =====",
+                apiKey.substring(0, Math.min(8, apiKey.length())));
+    }
+
+    // ── FOOD NUTRITION ─────────────────────────────────────────
+    public FoodDTOs.NutritionInfo analyzeFoodNutrition(String foodName, Double quantityAmount, String quantityUnit) {
+        double amount = (quantityAmount != null && quantityAmount > 0) ? quantityAmount : 100.0;
+        String unit   = (quantityUnit  != null && !quantityUnit.isBlank()) ? quantityUnit.toLowerCase() : "grams";
+        try {
+            String raw = callGroq(buildFoodPrompt(foodName, amount, unit), 500, true, FOOD_MODEL);
+            log.info("Food AI raw [{}] [{} {}]: [{}]", foodName, amount, unit, raw);
+            if (raw == null || raw.startsWith("ERROR:")) return buildFoodError(raw != null ? raw : "API failed");
+            return parseFoodNutrition(raw, foodName, amount, unit);
+        } catch (Exception e) {
+            log.error("analyzeFoodNutrition failed", e);
+            return buildFoodError("Failed: " + e.getMessage());
+        }
+    }
 
     public FoodDTOs.NutritionInfo analyzeFoodNutrition(String foodName, Double quantityGrams) {
-        double quantity = (quantityGrams != null && quantityGrams > 0) ? quantityGrams : 100.0;
-        try {
-            String raw = callGemini(foodName, quantity);
-            log.info("Gemini raw text for [{}]: [{}]", foodName, raw);
-
-            if (raw == null || raw.startsWith("ERROR:")) {
-                return buildError(raw != null ? raw : "Gemini API failed");
-            }
-            return parseNutrition(raw, foodName, quantity);
-        } catch (Exception e) {
-            log.error("analyzeFoodNutrition exception for [{}]", foodName, e);
-            return buildError("Failed: " + e.getMessage());
-        }
+        return analyzeFoodNutrition(foodName, quantityGrams, "grams");
     }
 
-    private String callGemini(String foodName, double quantity) {
-        try {
-            // Clear, unambiguous prompt — no template with 0s that Gemini copies literally
-            String prompt =
-                "You are a nutrition database. Return ONLY a JSON object with the exact nutrition " +
-                "values for " + (int)quantity + " grams of " + foodName + ". " +
-                "The JSON must have these exact keys with REAL numeric values (not zeros): " +
-                "foodName (string), calories (number), proteinGrams (number), " +
-                "carbsGrams (number), fatGrams (number), fiberGrams (number), " +
-                "aiAnalysis (one sentence string). " +
-                "Do NOT include markdown, backticks, or any text outside the JSON object.";
-
-            // Build request using ObjectMapper — zero risk of escaping bugs
-            ObjectNode part = mapper.createObjectNode();
-            part.put("text", prompt);
-
-            ArrayNode parts = mapper.createArrayNode();
-            parts.add(part);
-
-            ObjectNode contentObj = mapper.createObjectNode();
-            contentObj.set("parts", parts);
-
-            ArrayNode contents = mapper.createArrayNode();
-            contents.add(contentObj);
-
-            ObjectNode genConfig = mapper.createObjectNode();
-            genConfig.put("temperature", 0.2);
-            genConfig.put("maxOutputTokens", 400);
-
-            ObjectNode reqBody = mapper.createObjectNode();
-            reqBody.set("contents", contents);
-            reqBody.set("generationConfig", genConfig);
-
-            String requestJson = mapper.writeValueAsString(reqBody);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(GEMINI_URL + apiKey))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestJson))
-                    .timeout(Duration.ofSeconds(30))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-            log.info("Gemini HTTP status: {}", response.statusCode());
-
-            if (response.statusCode() != 200) {
-                log.error("Gemini error {}: {}", response.statusCode(), response.body());
-                return "ERROR: HTTP " + response.statusCode() + " — " + response.body();
-            }
-
-            JsonNode root = mapper.readTree(response.body());
-
-            // API-level error in body
-            if (root.has("error")) {
-                String msg = root.path("error").path("message").asText("unknown");
-                log.error("Gemini API error: {}", msg);
-                return "ERROR: " + msg;
-            }
-
-            JsonNode candidates = root.path("candidates");
-            if (candidates.isMissingNode() || candidates.isEmpty()) {
-                log.error("No candidates: {}", response.body());
-                return "ERROR: No candidates in response";
-            }
-
-            JsonNode firstCandidate = candidates.get(0);
-
-            // Blocked by safety filter
-            String finishReason = firstCandidate.path("finishReason").asText("");
-            if ("SAFETY".equals(finishReason) || "RECITATION".equals(finishReason)) {
-                return "ERROR: Response blocked by safety filter";
-            }
-
-            JsonNode partsNode = firstCandidate.path("content").path("parts");
-            if (partsNode.isMissingNode() || partsNode.isEmpty()) {
-                return "ERROR: Empty parts in response";
-            }
-
-            return partsNode.get(0).path("text").asText("").trim();
-
-        } catch (Exception e) {
-            log.error("callGemini exception", e);
-            return "ERROR: " + e.getMessage();
-        }
+    private String buildFoodPrompt(String foodName, double amount, String unit) {
+        return String.format(
+            "Nutrition expert. Return ONLY JSON for %.1f %s of \"%s\". " +
+            "Convert to grams/ml first (1 cup≈240ml, 1 bowl≈300ml, 1 piece banana≈120g, 1 tbsp≈15ml, 1 can soda≈355ml). " +
+            "IMPORTANT for waterContentMl: beverages (cola, juice, soda, tea, coffee, milk, energy drinks, water) " +
+            "have waterContentMl equal to their volume in ml. " +
+            "Diet Coke 330ml → waterContentMl=330. Orange juice 1 cup → waterContentMl=240. " +
+            "Fruits: watermelon 200g → waterContentMl=184. Dry foods (roti, rice, nuts) → waterContentMl is small (5-20). " +
+            "JSON keys: foodName, quantityGrams, calories, proteinGrams, carbsGrams, fatGrams, fiberGrams, " +
+            "waterContentMl, goodCalories(proteinGrams*4+fiberGrams*2), badCalories(fatGrams*9), " +
+            "carbCalories(carbsGrams*4), calQuality(Excellent/Good/Moderate/Poor), aiAnalysis(one sentence). No markdown.",
+            amount, unit, foodName);
     }
 
-    private FoodDTOs.NutritionInfo parseNutrition(String raw, String foodName, double quantity) {
+    private FoodDTOs.NutritionInfo parseFoodNutrition(String raw, String foodName, double amount, String unit) {
         try {
-            String cleaned = raw.trim();
-
-            // Remove markdown fences
-            if (cleaned.contains("```")) {
-                cleaned = cleaned.replaceAll("(?s)```[a-zA-Z]*\\s*", "")
-                                 .replace("```", "").trim();
-            }
-
-            // Extract first complete JSON object { ... }
-            int start = cleaned.indexOf('{');
-            int end   = cleaned.lastIndexOf('}');
-            if (start < 0 || end <= start) {
-                log.error("No JSON in response: [{}]", raw);
-                return buildError("AI returned unexpected format. Try again.");
-            }
-            cleaned = cleaned.substring(start, end + 1);
-
+            String cleaned = extractJson(raw);
             JsonNode node = mapper.readTree(cleaned);
 
             double calories = node.path("calories").asDouble(0);
@@ -159,35 +84,95 @@ public class GeminiService {
             double carbs    = node.path("carbsGrams").asDouble(0);
             double fat      = node.path("fatGrams").asDouble(0);
             double fiber    = node.path("fiberGrams").asDouble(0);
+            double qGrams   = node.path("quantityGrams").asDouble(amount);
+            double waterMl  = node.path("waterContentMl").asDouble(0);
 
-            // Sanity check — if all macros are 0, something went wrong
-            if (calories == 0 && protein == 0 && carbs == 0 && fat == 0) {
-                log.warn("All macros are 0 for [{}], raw=[{}]", foodName, raw);
-                return buildError("AI returned zero values. Please try again.");
-            }
+            if (calories == 0 && protein == 0 && carbs == 0 && fat == 0)
+                return buildFoodError("AI returned zero values. Try again.");
+
+            double goodCal = node.path("goodCalories").asDouble(r1(protein * 4 + fiber * 2));
+            double badCal  = node.path("badCalories").asDouble(r1(fat * 9));
+            double carbCal = node.path("carbCalories").asDouble(r1(carbs * 4));
+            String quality = node.path("calQuality").asText(calcQuality(goodCal, badCal));
 
             return FoodDTOs.NutritionInfo.builder()
                     .foodName(node.path("foodName").asText(foodName))
-                    .quantityGrams(quantity)
-                    .calories(Math.round(calories * 10.0) / 10.0)
-                    .proteinGrams(Math.round(protein * 10.0) / 10.0)
-                    .carbsGrams(Math.round(carbs * 10.0) / 10.0)
-                    .fatGrams(Math.round(fat * 10.0) / 10.0)
-                    .fiberGrams(Math.round(fiber * 10.0) / 10.0)
-                    .aiAnalysis(node.path("aiAnalysis").asText(""))
-                    .success(true)
-                    .build();
-
+                    .quantityAmount(amount).quantityUnit(unit).quantityGrams(r1(qGrams))
+                    .calories(r1(calories)).proteinGrams(r1(protein)).carbsGrams(r1(carbs))
+                    .fatGrams(r1(fat)).fiberGrams(r1(fiber)).waterContentMl(r1(waterMl))
+                    .goodCalories(r1(goodCal)).badCalories(r1(badCal)).carbCalories(r1(carbCal))
+                    .calQuality(quality).aiAnalysis(node.path("aiAnalysis").asText(""))
+                    .success(true).build();
         } catch (Exception e) {
-            log.error("parseNutrition failed for raw=[{}]", raw, e);
-            return buildError("Could not parse AI response. Try again.");
+            log.error("parseFoodNutrition failed: {}", raw, e);
+            return buildFoodError("Could not parse AI response.");
         }
     }
 
-    private FoodDTOs.NutritionInfo buildError(String msg) {
-        return FoodDTOs.NutritionInfo.builder()
-                .success(false)
-                .errorMessage(msg)
-                .build();
+    // ── WORKOUT PLAN (uses bigger model) ───────────────────────
+    public String generateResponse(String prompt) {
+        return callGroq(prompt, 4000, false, WORKOUT_MODEL);
+    }
+
+    // ── CORE GROQ CALL ─────────────────────────────────────────
+    private String callGroq(String prompt, int maxTokens, boolean jsonMode, String model) {
+        try {
+            ObjectNode message = mapper.createObjectNode();
+            message.put("role", "user");
+            message.put("content", prompt);
+            ArrayNode messages = mapper.createArrayNode();
+            messages.add(message);
+
+            ObjectNode reqBody = mapper.createObjectNode();
+            reqBody.put("model", model);
+            reqBody.set("messages", messages);
+            reqBody.put("temperature", 0.2);
+            reqBody.put("max_tokens", maxTokens);
+            if (jsonMode) {
+                ObjectNode fmt = mapper.createObjectNode();
+                fmt.put("type", "json_object");
+                reqBody.set("response_format", fmt);
+            }
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(GROQ_URL))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(reqBody)))
+                    .timeout(Duration.ofSeconds(60))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            log.info("Groq HTTP {} status: {}", model, response.statusCode());
+
+            if (response.statusCode() != 200) {
+                log.error("Groq HTTP {}: {}", response.statusCode(), response.body());
+                return "ERROR: HTTP " + response.statusCode();
+            }
+
+            JsonNode root = mapper.readTree(response.body());
+            return root.path("choices").get(0).path("message").path("content").asText("").trim();
+        } catch (Exception e) {
+            log.error("callGroq failed", e);
+            return "ERROR: " + e.getMessage();
+        }
+    }
+
+    // ── HELPERS ────────────────────────────────────────────────
+    private String extractJson(String raw) {
+        String c = raw.trim();
+        if (c.contains("```")) c = c.replaceAll("(?s)```[a-zA-Z]*\\s*", "").replace("```", "").trim();
+        int s = c.indexOf('{'), e = c.lastIndexOf('}');
+        return (s >= 0 && e > s) ? c.substring(s, e + 1) : c;
+    }
+    private String calcQuality(double good, double bad) {
+        if (good > bad * 2)    return "Excellent";
+        if (good > bad)        return "Good";
+        if (good > bad * 0.5)  return "Moderate";
+        return "Poor";
+    }
+    private double r1(double v) { return Math.round(v * 10.0) / 10.0; }
+    private FoodDTOs.NutritionInfo buildFoodError(String msg) {
+        return FoodDTOs.NutritionInfo.builder().success(false).errorMessage(msg).build();
     }
 }

@@ -4,6 +4,8 @@ import com.gymcal.dto.FoodDTOs;
 import com.gymcal.service.FoodLogService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -18,7 +20,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class FoodController {
 
-    private final FoodLogService foodLogService;
+	@Autowired
+    private  FoodLogService foodLogService;
 
     /**
      * Search food nutrition via AI (preview before adding)

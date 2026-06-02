@@ -1,112 +1,87 @@
 package com.gymcal.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import jakarta.validation.constraints.*;
-
 import java.time.LocalDate;
 import java.util.List;
 
 public class FoodDTOs {
 
-    // Request to search food nutrition via AI
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class FoodSearchRequest {
         @NotBlank(message = "Food name is required")
         private String foodName;
-
-        @NotNull @Positive
-        private Double quantityGrams;
+        private Double quantityAmount; // e.g. 2 (cups) or 150 (grams)
+        private String quantityUnit;   // grams, pieces, cup, bowl, tbsp, tsp, ml
     }
 
-    // AI nutrition result
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class NutritionInfo {
         private String foodName;
-        private double quantityGrams;
+        private double quantityAmount;
+        private String quantityUnit;
+        private double quantityGrams;  // converted to grams
         private double calories;
         private double proteinGrams;
         private double carbsGrams;
         private double fatGrams;
         private double fiberGrams;
+        private double waterContentMl;
+        private double goodCalories;   // protein + fiber cals
+        private double badCalories;    // fat cals
+        private double carbCalories;   // carb cals
+        private String calQuality;     // "Excellent", "Good", "Moderate", "Poor"
         private String aiAnalysis;
         private boolean success;
         private String errorMessage;
     }
 
-    // Request to add food to daily log
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class AddFoodLogRequest {
-        @NotBlank
-        private String foodName;
-
-        @NotNull @Positive
+        @NotBlank private String foodName;
+        private Double quantityAmount;
+        private String quantityUnit;
         private Double quantityGrams;
-
-        @NotBlank
-        private String mealType; // BREAKFAST, LUNCH, DINNER, SNACK
-
-        private LocalDate logDate; // defaults to today if null
-
-        // Pre-calculated nutrition (from search result)
+        @NotBlank private String mealType;
+        private LocalDate logDate;
         private Double calories;
         private Double proteinGrams;
         private Double carbsGrams;
         private Double fatGrams;
         private Double fiberGrams;
+        private Double waterContentMl;
+        private Double goodCalories;
+        private Double badCalories;
+        private Double carbCalories;
         private String aiAnalysis;
     }
 
-    // Daily summary response
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class DailySummary {
         private LocalDate date;
-
-        // Targets
         private int targetCalories;
         private double targetProtein;
         private double targetCarbs;
         private double targetFat;
-
-        // Consumed
         private double consumedCalories;
         private double consumedProtein;
         private double consumedCarbs;
         private double consumedFat;
         private double consumedFiber;
-
-        // Remaining
+        private double totalWaterFromFood;
+        private double goodCalories;   // total good cals today
+        private double badCalories;    // total bad cals today
+        private double carbCalories;   // total carb cals today
         private double remainingCalories;
         private double remainingProtein;
-
-        // Meal breakdown
         private List<MealGroup> meals;
-
-        // Progress percentages
         private double calorieProgress;
         private double proteinProgress;
         private double carbProgress;
         private double fatProgress;
     }
 
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class MealGroup {
         private String mealType;
         private List<FoodLogResponse> items;
@@ -114,14 +89,12 @@ public class FoodDTOs {
         private double totalProtein;
     }
 
-    // Food log entry response
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class FoodLogResponse {
         private String id;
         private String foodName;
+        private double quantityAmount;
+        private String quantityUnit;
         private double quantityGrams;
         private String mealType;
         private double calories;
@@ -129,28 +102,25 @@ public class FoodDTOs {
         private double carbsGrams;
         private double fatGrams;
         private double fiberGrams;
+        private double waterContentMl;
+        private double goodCalories;
+        private double badCalories;
+        private double carbCalories;
         private String logDate;
         private String createdAt;
     }
 
-    // Goal update request
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class UpdateGoalRequest {
         private String goal;
         private String activityLevel;
         private Double weightKg;
         private Double heightCm;
         private Integer age;
+        private List<String> healthConditions;
     }
 
-    // User profile response
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class UserProfileResponse {
         private String id;
         private String name;
@@ -167,5 +137,6 @@ public class FoodDTOs {
         private double dailyProteinTarget;
         private double dailyCarbTarget;
         private double dailyFatTarget;
+        private List<String> healthConditions;
     }
 }
